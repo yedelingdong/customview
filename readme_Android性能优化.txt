@@ -153,20 +153,18 @@ public class TestManager {
 接着再让Activity实现OnDataArrivedListener接口并向TestManager注册监听.
 下面的代码由于缺少解注册的操作所以会引起内存泄露，泄露的原因是Activity的对象被单例模式的TestManager
 所持有，而单例模式的特点是其生命周期和Application保持一致，因此Activity对象无法被及时释放。
-下面的代码由于缺少解注册的操作所以会引起内存泄露，泄露的原因是Activity的对象被单例模式的TestManager所持有，
-而单例模式的特点是其生命周期和Application保持一致，因此Activity对象无法被及时释放。
 protected void onCreate(Bundle savedInstanceState) {
     super.onCreate(savedInstanceState);
     setContentView(R.layout.activity_main);
     TestManager.getInstance().registerListener(this);
 }
 解决方法：
-在onDestroy里面调用TestManager.getInstance().unregisterListener(this);注销
+在onDestroy里面调用TestManager.getInstance().unregisterListener(this);解注册
 
 场景3：属性动画导致的内存泄露
 从Android 3.0开始，Google提供了属性动画，属性动画中有一类无限循环的动画，如果在Activity中
-播放此类动画且没有在onDestroy中去停止动画，那么动画会一直播放下去，尽管已经无法在界面上看到动画效果了，
-并且这个时候Activity的View会被动画持有，而View又持有了Activity，最终Activity无法释放。
+播放此类动画且没有在onDestroy中去停止动画，那么动画会一直播放下去，尽管无法在界面上看到动画效果了，
+并且这个时候Activity的View会被动画持有，而View又持有了Activity，最终引起Activity无法释放。
 protected void onCreate(Bundle savedInstanceState) {
     super.onCreate(savedInstanceState);
     setContentView(R.layout.activity_main);
@@ -176,14 +174,14 @@ protected void onCreate(Bundle savedInstanceState) {
     animator.start();
 }
 解决方法：
-在Activity的onDestroy中调用animator.cancel()来停止动画。
+在Activity的onDestroy中调用animator.cancel()停止动画。
 
 场景4：Hanlder使用引起的内存泄漏
 使用Handler更新UI。因为Handler持有当前Activity的引用导致Activity无法被回收，应该被回收的对象
 不能被回收而驻留在堆内存中产生内存泄漏。最终造成OOM。
 主线程的ThreadLocal -> Looper -> MessageQueue -> Message -> Handler -> Activity
 APP存活，所以主线程一直存在，Looper一直存在，MessageQueue一直存在。发送延迟消息时，如果Activity销毁，
-很可能会引起内存泄漏。
+很可能会引起内存泄漏。示例如下：
 Handler mHandler = new Handler() {
     @Override
     public void handleMessage(@NonNull Message msg) {
@@ -204,13 +202,13 @@ protected void onCreate(Bundle savedInstanceState) {
 而mHandler又是一个匿名内部类的实例并持有外部Activity引用，会引起Activity无法回收，导致Activity持有
 的资源无法回收引起内存泄漏。
 解决方法：
-在Activity销毁时将Handler手动置null,或将messagequeue清空，或将Handler为静态内部类，内部通过弱引用
+在Activity销毁时将Handler手动置null,或将messagequeue清空，或将Handler改为静态内部类，内部通过弱引用
 持有Activity对象。
 private static class MyHanlder extends Handler {
     private final WeakReference<TestActivity> mActivity;
 
-    private MyHanlder(TestActivity mActivity) {
-        this.mActivity = new WeakReference<TestActivity>(mActivity);
+    private MyHanlder(TestActivity activity) {
+        this.mActivity = new WeakReference<TestActivity>(activity);
     }
 
     @Override
@@ -233,7 +231,7 @@ private static final Runnable myRunnable = new Runnable() {
 new MyHanlder(this).postDelayed(myRunnable, 50 * 1000);
 
 场景5：多线程引起的内存泄漏
-与Handler类似，使用弱引用解决这类问题。
+A:可以使用弱引用解决类似问题。
 
 
 Profiler使用
@@ -259,7 +257,7 @@ Systrace -> 在命令行中使用 systrace 或在 CPU Profiler 中使用经过�
 OpenGL ES 跟踪器 -> 使用 Graphics API Debugger。
 Hierarchy Viewer -> Layout Inspector布局检查器
 Pixel Perfect -> 布局检查器
-网络流量工具 -> Networ Profiler。
+网络流量工具 -> Network Profiler。
 
 
 MAT工具的使用
@@ -282,7 +280,7 @@ protected void onCreate(Bundle savedInstanceState) {
 }
 
 为了分析ANR的原因，可以导出traces文件，如下所示，其中．表示当前目录：
-adb pull /data/anr/traces.txt
+adb pull /data/anr/traces.txt .
 
 场景2：onCreate中开启了一个线程，在线程中执行testANR()，而testANR()和initView()都被加了同一个锁，
 为了百分之百让testANR()先获得锁，特意在执行initView()之前让主线程休眠了10ms，这样一来initView()
@@ -309,30 +307,36 @@ private synchronized void testANR() {
 
 
 ---ListView优化和Bitmap优化？
-ListView的优化在第12章已经做了介绍，这里再简单回顾一下。主要分为三个方面：首先要采用ViewHolder并
-避免在getView中执行耗时操作；其次要根据列表的滑动状态来控制任务的执行频率，比如当列表快速滑动时显然
-是不太适合开启大量的异步任务的；最后可以尝试开启硬件加速来使Listview的滑动更加流畅。注意Listview的
-优化策略完全适用于GridView。Bitmap的优化同样在第12章已经做了详细的介绍，主要是通过BitmapFactory.Options
-来根据需要对图片进行采样，采样过程中主要用到了BitmapFactory.Options的inSampleSize参数。
+ListView的优化主要分为三个方面：
+1.采用ViewHolder并避免在getView中执行耗时操作；
+2.根据列表的滑动状态来控制任务的执行频率，比如当列表快速滑动时显然是不太适合开启大量的异步任务的；
+3.尝试开启硬件加速来使Listview的滑动更加流畅。
+注意Listview的优化策略完全适用于GridView。
+Bitmap的优化主要是通过BitmapFactory.Options来根据需要对图片进行采样，采样过程中主要用到了
+BitmapFactory.Options的inSampleSize参数。
 
 
 ---线程优化？
 线程优化的思想是采用线程池，避免程序中存在大量的Thread。线程池可以重用内部的线程，从而避免了线程的创建
-和销毁所带来的性能开销，同时线程池还能有效地控制线程池的最大并发数，避免大量的线程因互相抢占系统资源从而
-导致阻塞现象的发生。因此在实际开发中，我们要尽量采用线程池，而不是每次都要创建一个Thread对象。
+和销毁所带来的性能开销，同时线程池还能有效地控制线程池的最大并发数，避免大量的线程因互相抢占系统资源导致
+阻塞现象的发生。在实际开发中，我们要尽量采用线程池，而不是每次都去创建一个Thread对象。
 
 
 ---一些性能优化建议？
 · 避免创建过多的对象；
-· 不要过多使用枚举，枚举占用的内存空间要比整型大；
+· 不要过多使用枚举，枚举占用的内存空间要比整型大；（根据业务需求和逻辑来判定，如果枚举让信息描述更清晰和易于维护就使用枚举）
 · 常量请使用static final来修饰；
-· 使用一些Android特有的数据结构，比如SparseArray和Pair等，它们都具有更好的性能；
+· 使用Android系统特有的数据结构，比如SparseArray,SparseBooleanArray,SparseIntArray,SparseLongArray,Pair,
+  ArrayMap,ArraySet等，它们在一定条件下具有较好的性能；
 · 适当使用弱引用和软引用；
-· 采用内存缓存和磁盘缓存；
-· 尽量采用静态内部类，这样可以避免潜在的由于内部类而导致的内存泄露。
+· 采用内存缓存(LruCache)和磁盘缓存(DiskLruCache)；
+· 尽量采用静态内部类，避免内部类隐式持有外部类的引用引起内存泄露。
 
 
----内存泄露分析之MAT工具，Android Studio高版本使用Profiler分析内存,CPU,network,energy的使用情况。
+---内存泄露分析:
+1.MAT工具(Android Studio 3.0以前)
+2.Android Profiler在Android Studio 3.0或者更高版本替代Android Monitor，使用Profiler
+分析内存,CPU,network,energy等的使用情况。
 
 
 ---提高程序的可维护性
@@ -340,18 +344,18 @@ ListView的优化在第12章已经做了介绍，这里再简单回顾一下。�
 1.规范命名，要能正确地传达出变量或者方法的含义，少用缩写，参考Android源码的命名方式，比如私有成员以m开头，
 静态成员以s开头，常量则全部用大写字母表示，等等。
 2.规范排版，代码的排版上需要留出合理的空白来区分不同的代码块。
-3.仅为非常关键的代码添加注释，其他地方不写注释，这就对变量和方法的命名风格提出了很高的要求
+3.仅为关键代码添加注释，其他地方不写注释，这就对变量和方法的命名风格提出了很高的要求
 
 代码的层次性是指代码要有分层的概念，对于一段业务逻辑，不要试图在一个方法或者一个类中去全部实现，
 而要将它分成几个子逻辑，然后每个子逻辑做自己的事情，这样既显得代码层次分明，又可以分解任务从而
 实现简化逻辑的效果。
 
-在写程序的过程中要时刻考虑到扩展，考虑着如果这个逻辑后面发生了改变那么需要做哪些修改，以及怎么样
-才能降低修改的工作量，面向扩展编程会使程序具有很好的扩展性。
+在写程序的过程中要时刻考虑扩展性，如果这个逻辑发生了改变需要做哪些修改，怎样才能降低修改的工作量，
+面向扩展编程会使程序具有较好的扩展性。
 
-恰当地使用设计模式可以提高代码的可维护性和可扩展性，但是Android程序容易有性能瓶颈，因此要控制设计的度，
-设计不能太牵强，否则就是过度设计了。
+合理地使用设计模式可以提高代码可维护性和可扩展性，Android操作系统主要用于移动设备的开发，容易产生
+性能瓶颈，因此要控制设计的度，设计不能太牵强，否则就是过度设计了。
 
-设计模式需要理解后灵活运用才能发挥更好的效果。
+设计模式需要理解后灵活运用，才能发挥更好的效果，切记切记！！
 
 
